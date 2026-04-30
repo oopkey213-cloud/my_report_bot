@@ -1,0 +1,25 @@
+name: Industry Report Bot
+
+on:
+  schedule:
+    - cron: '*/30 23-23,0-9 * * *' # 한국 시간 기준 대략 오전 8시 ~ 오후 6시 (30분 간격)
+  workflow_dispatch: # 수동으로 실행해보고 싶을 때 사용
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run bot
+        run: python bot.py
