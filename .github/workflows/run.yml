@@ -2,9 +2,11 @@ name: Industry Report Bot
 
 on:
   schedule:
-    # 한국 시간 기준 오전 8시 ~ 오후 7시 사이 30분마다 작동하게 수정했습니다.
-    - cron: '*/30 0-10,23 * * *' 
-  workflow_dispatch: # 우리가 직접 실행 버튼을 누를 수 있게 해줍니다.
+    - cron: '*/30 0-10,23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write # ⭐️ 깃허브에 수첩을 저장할 수 있는 권한 부여!
 
 jobs:
   build:
@@ -24,3 +26,11 @@ jobs:
 
       - name: Run bot
         run: python bot.py
+
+      - name: Save memory
+        run: |
+          git config user.name "GitHub Action Bot"
+          git config user.email "action@github.com"
+          git add last_title.txt
+          git commit -m "Update last report" || echo "새로운 리포트 없음"
+          git push
