@@ -5,7 +5,7 @@ import fitz  # PyMuPDF
 from openai import OpenAI
 import time
 
-# 1. 정보 설정
+# 1. 설정
 TOKEN = "8674194148:AAEEseoUojsIS1bbVNqvyM_3gFXPbTRjVeA"
 CHAT_ID = "1674011615"
 api_key = os.environ.get("OPENAI_API_KEY")
@@ -16,62 +16,75 @@ def send_tg(text):
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
     requests.post(url, data=payload, timeout=10)
 
-def get_summary(text, report_type):
+def get_summary(text):
     if not api_key: return "API 키 없음"
     
-    if report_type == "산업":
-        # 산업 리포트: 엄격한 10줄 + 수혜주 3개
-        prompt = (
-            "너는 전문 애널리스트야. 주어진 텍스트 내용 '안에 있는 정보'로만 작성해.\n"
-            "1. 주가 전망 같은 뻔한 소리는 빼고, 산업의 구조적 변화를 1번부터 10번까지 번호를 붙여 10줄로 요약해.\n"
-            "2. 마지막 11행에는 본문에 언급된 '수혜 기업' 3개를 '관련 기업: 기업1, 기업2, 기업3' 형식으로 적어.\n"
-            "3. 본문에 없는 기업(하이닉스 등)을 지어내면 절대 안 돼. 없으면 '관련 기업: 없음'이라고 해."
-        )
-    else:
-        # 기업 리포트: 목표가 상향 근거 3줄
-        prompt = "이 기업의 '목표주가 상향 이유'를 리포트 본문 근거로 딱 3줄 요약해줘. 본문에 없는 내용은 쓰지 마."
+    prompt = (
+        "너는 거시 경제와 산업 트렌드를 분석하는 최고 수준의 애널리스트야.\n"
+        "아래 제공된 '리포트 원문'만을 분석해서 다음 규칙을 엄격히 지켜 요약해줘.\n"
+        "1. 원문에 없는 내용(특히 엉뚱한 기업명)은 절대 지어내지 마.\n"
+        "2. 단순한 주가 설명은 제외하고, 산업의 구조적 변화, 핵심 논거, 매크로 환경을 1번부터 10번까지 번호를 매겨 딱 10줄로 깊이 있게 요약해.\n"
+        "3. 11번째 줄에는 리포트 원문에 실제로 언급된 '핵심 수혜 기업' 3개를 골라 '관련 기업: 기업명1, 기업명2, 기업명3' 형식으로 적어.\n"
+        "4. 원문에 기업이 언급되지 않았다면 '관련 기업: 원문 언급 없음'으로 명시해."
+    )
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": f"리포트 본문 내용:\n{text[:7000]}"}
+                {"role": "user", "content": f"리포트 원문:\n{text[:8000]}"}
             ],
-            temperature=0 # 환각 방지를 위해 창의성 0
+            temperature=0.0 # 소설 쓰는 것(환각)을 완벽 차단
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"요약 생성 실패: {e}"
+        return f"요약 에러: {e}"
 
 def get_real_pdf_url(detail_url):
+    """상세 페이지에서 진짜 '.pdf'로 끝나는 파일 주소를 찾습니다."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         res = requests.get(detail_url, headers=headers, timeout=10)
         res.encoding = 'euc-kr'
         soup = BeautifulSoup(res.text, 'html.parser')
-        file_div = soup.select_one('div.view_file')
-        if file_div and file_div.select_one('a'):
-            return file_div.select_one('a')['href']
+        
+        for a_tag in soup.find_all('a', href=True):
+            if '.pdf' in a_tag['href'].lower():
+                return a_tag['href']
+        return None
     except: return None
 
 def process_pdf(pdf_url):
+    """실제 PDF 파일을 다운받아 글자를 추출합니다."""
     try:
-        r = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
-        with open("temp.pdf", "wb") as f: f.write(r.content)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        r = requests.get(pdf_url, headers=headers, timeout=20)
+        
+        # 파일이 정상적인 PDF인지 매직 넘버(%PDF)로 검사
+        if not r.content.startswith(b'%PDF'):
+            print("   ❌ 다운받은 파일이 PDF 포맷이 아닙니다.")
+            return None
+            
+        with open("temp.pdf", "wb") as f:
+            f.write(r.content)
+            
         doc = fitz.open("temp.pdf")
         text = ""
-        for i in range(min(len(doc), 5)): text += doc[i].get_text()
-        return text.strip()
+        # 산업 리포트는 깊이가 중요하므로 앞 6페이지까지 넉넉히 정독
+        for i in range(min(len(doc), 6)): 
+            text += doc[i].get_text()
+            
+        return text.strip() if len(text.strip()) > 200 else None
     except Exception as e:
-        print(f"   - PDF 읽기 실패: {e}")
-        return ""
+        print(f"   ❌ PDF 처리 실패: {e}")
+        return None
 
-def check_and_run(url, report_type):
-    print(f"\n--- {report_type} 리포트 탐색 시작 ---")
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def check_industry_reports():
+    print("🔎 산업 리포트 전용 봇 가동 시작...")
+    url = "https://finance.naver.com/research/industry_list.naver"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
-    # 기억 장치 로드
     sent_file = "last_title.txt"
     sent_titles = []
     if os.path.exists(sent_file):
@@ -87,50 +100,49 @@ def check_and_run(url, report_type):
         for row in rows:
             cols = row.find_all('td')
             if len(cols) < 3: continue 
+            
             a_tag = cols[1].find('a')
             if not a_tag: continue
             
             title = a_tag.get_text().strip()
-            print(f"👉 확인 중: {title}")
             
-            # 1. 중복 체크
-            if title in sent_titles:
-                print("   - 이미 보낸 리포트입니다. 스킵!")
-                continue
+            # 이미 보낸 리포트 패스
+            if title in sent_titles: continue
             
-            # 2. 기업 리포트 상향 필터
-            if report_type == "기업" and not any(k in title for k in ["상향", "↑"]):
-                print("   - 상향 리포트가 아닙니다. 스킵!")
-                continue
-
-            # 3. 상세 페이지 -> PDF 추출
+            print(f"\n👉 타겟 발견: {title}")
             detail_url = "https://finance.naver.com/research/" + a_tag['href']
+            brokerage = cols[2].get_text().strip()
+            
+            # 1. 가짜 링크 거르고 진짜 PDF 링크 확보
             pdf_url = get_real_pdf_url(detail_url)
-            if not pdf_url: 
-                print("   - PDF 링크를 못 찾았습니다.")
+            if not pdf_url:
+                print("   ❌ 상세 페이지에 PDF 파일이 없습니다.")
                 continue
             
+            # 2. PDF에서 텍스트 뽑기 (텍스트 없으면 요약 취소)
+            print("   - PDF 파일 분석 중...")
             pdf_text = process_pdf(pdf_url)
-            if not pdf_text or len(pdf_text) < 100:
-                print("   - PDF 내용이 비어있거나 읽을 수 없는 형식입니다.")
+            if not pdf_text:
+                print("   ❌ 텍스트를 읽을 수 없는 PDF입니다. 건너뜁니다.")
                 continue
             
-            # 4. 요약 및 전송
-            print("   - AI 요약 중...")
-            summary = get_summary(pdf_text, report_type)
+            # 3. AI 분석 및 텔레그램 전송
+            print("   - AI 요약 진행 중...")
+            summary = get_summary(pdf_text)
             
-            msg = f"📢 *[{report_type} 분석]*\n📌 {title}\n\n{summary}\n\n🔗 [원문보기]({pdf_url})"
+            msg = f"📢 *[산업 심층 브리핑]*\n📌 {title}\n🏢 {brokerage}\n\n{summary}\n\n🔗 [원문 PDF 보기]({pdf_url})"
             send_tg(msg)
             
-            # 기록 업데이트
+            print(f"✅ 텔레그램 전송 완료: {title}")
+            
+            # 성공한 리포트만 수첩에 기록
             with open(sent_file, "a", encoding="utf-8") as f:
                 f.write(title + "\n")
-            print(f"✅ 전송 완료: {title}")
-            time.sleep(3)
+            
+            time.sleep(5)
             
     except Exception as e:
         print(f"🚨 에러 발생: {e}")
 
 if __name__ == "__main__":
-    check_and_run("https://finance.naver.com/research/industry_list.naver", "산업")
-    check_and_run("https://finance.naver.com/research/company_list.naver", "기업")
+    check_industry_reports()
