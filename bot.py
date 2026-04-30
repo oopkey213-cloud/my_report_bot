@@ -71,8 +71,8 @@ def check_and_run(url, report_type):
                 is_up = any(k in title for k in ["상향", "↑", "매수", "Buy", "유지"]) # '유지'도 추가해서 테스트
                 if not is_up: continue
 
-            if title in sent_titles:
-                continue
+# if title in sent_titles:
+#     continue
 
             print(f"✨ 새 리포트 발견: {title}")
             
