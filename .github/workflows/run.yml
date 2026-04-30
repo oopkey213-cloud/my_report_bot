@@ -2,18 +2,19 @@ name: Industry Report Bot
 
 on:
   schedule:
-    - cron: '*/30 23-10 * * *' # 한국 시간 기준 오전 8시 ~ 오후 7시
-  workflow_dispatch: # 수동 실행 버튼 생성
+    # 한국 시간 기준 오전 8시 ~ 오후 7시 사이 30분마다 작동하게 수정했습니다.
+    - cron: '*/30 0-10,23 * * *' 
+  workflow_dispatch: # 우리가 직접 실행 버튼을 누를 수 있게 해줍니다.
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # v3에서 v4로 업데이트
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # v4에서 v5로 업데이트
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
