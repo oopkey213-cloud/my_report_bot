@@ -1,53 +1,64 @@
 import requests
 from bs4 import BeautifulSoup
+import os
 
 TOKEN = "8674194148:AAEEseoUojsIS1bbVNqvyM_3gFXPbTRjVeA"
 CHAT_ID = "1674011615"
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    # 에러를 일으키던 특수문자 설정(parse_mode)을 제거했습니다.
     params = {"chat_id": CHAT_ID, "text": text}
-    r = requests.get(url, params=params)
-    print(f"텔레그램 응답: {r.status_code} - {r.text}") # 왜 안 보내졌는지 이유를 출력합니다.
-    return r.status_code
+    requests.get(url, params=params)
 
 def check_reports():
-    print("1. 테스트 메시지 전송 시도...")
-    send_message("로봇이 정상적으로 작동을 시작했습니다! (연결 테스트)")
+    # 1. 네이버 증권 산업분석 사이트 접속
+    url = "https://finance.naver.com/research/industry_list.naver"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-    print("2. 사이트 접속 시도 중...")
-    url = "http://consensus.hankyung.com/apps.analysis/analysis.list?skinType=industry"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    # 2. 리포트 목록 가져오기
+    rows = soup.select('table.type_1 tr')
+    reports = []
     
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
+    for row in rows:
+        if row.select_one('.file') is None: # 빈 줄 건너뛰기
+            continue
+            
+        title_td = row.select('td')[1]
+        title = title_td.text.strip()
+        link_a = title_td.select_one('a')
         
-        table_rows = soup.select('tr')
-        print(f"3. 데이터 분석 중... (발견된 행 수: {len(table_rows)})")
+        if not link_a: continue
+        
+        link = "https://finance.naver.com/research/" + link_a['href']
+        brokerage = row.select('td')[2].text.strip()
+        
+        reports.append({'title': title, 'brokerage': brokerage, 'link': link})
+        if len(reports) >= 5: # 최신 5개까지만 확인
+            break
+            
+    reports.reverse() # 오래된 것부터 보내기 위해 순서 뒤집기
 
-        if len(table_rows) <= 1:
-            print("(!) 리포트 목록을 찾지 못했습니다. 사이트 구조가 바뀌었거나 차단되었습니다.")
-            return
+    # 3. 로봇의 수첩(기억력) 읽어오기
+    sent_titles = []
+    if os.path.exists("last_title.txt"):
+        with open("last_title.txt", "r", encoding="utf-8") as f:
+            sent_titles = f.read().splitlines()
 
-        for row in table_rows[1:4]:
-            title_element = row.select_one('.text_l')
-            if not title_element: continue
-            
-            title = title_element.text.strip()
-            brokerage = row.select_one('.nm').text.strip() if row.select_one('.nm') else "증권사 미상"
-            
-            link_element = row.select_one('a')
-            link = "http://consensus.hankyung.com" + link_element['href'] if link_element else "링크 없음"
-            
-            # 꾸밈없이 단순한 텍스트로 보냅니다.
-            message = f"신규 산업 리포트\n\n제목: {title}\n증권사: {brokerage}\n링크: {link}"
-            
-            send_message(message)
+    # 4. 새로운 리포트만 골라서 텔레그램 전송
+    new_sent = sent_titles.copy()
+    for report in reports:
+        if report['title'] in sent_titles:
+            continue # 이미 수첩에 있는 제목이면 패스!
+        
+        message = f"📢 신규 산업 리포트\n\n제목: {report['title']}\n증권사: {report['brokerage']}\n링크: {report['link']}"
+        send_message(message)
+        new_sent.append(report['title']) # 수첩에 새 제목 추가
 
-    except Exception as e:
-        print(f"🚨 에러 발생: {e}")
+    # 5. 수첩 덮어쓰기 (최근 50개까지만 기억)
+    with open("last_title.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(new_sent[-50:]))
 
 if __name__ == "__main__":
     check_reports()
