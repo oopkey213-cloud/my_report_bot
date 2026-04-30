@@ -19,13 +19,16 @@ def send_tg(text):
 def get_summary(text):
     if not api_key: return "API 키 없음"
     
+    # [핵심] 가독성과 수혜주 추천을 위한 초강력 프롬프트
     prompt = (
-        "너는 거시 경제와 산업 트렌드를 분석하는 최고 수준의 애널리스트야.\n"
-        "아래 제공된 '리포트 원문'만을 분석해서 다음 규칙을 엄격히 지켜 요약해줘.\n"
-        "1. 원문에 없는 내용(특히 엉뚱한 기업명)은 절대 지어내지 마.\n"
-        "2. 단순한 주가 설명은 제외하고, 산업의 구조적 변화, 핵심 논거, 매크로 환경을 1번부터 10번까지 번호를 매겨 딱 10줄로 깊이 있게 요약해.\n"
-        "3. 11번째 줄에는 리포트 원문에 실제로 언급된 '핵심 수혜 기업' 3개를 골라 '관련 기업: 기업명1, 기업명2, 기업명3' 형식으로 적어.\n"
-        "4. 원문에 기업이 언급되지 않았다면 '관련 기업: 원문 언급 없음'으로 명시해."
+        "너는 거시 경제와 산업 트렌드, 섹터 분석을 최고 수준으로 잘하는 애널리스트야.\n"
+        "아래 제공된 '리포트 원문'을 분석해서 다음 규칙을 엄격히 지켜 요약해.\n"
+        "1. 산업의 구조적 변화, 핵심 트렌드, 매크로 영향을 1번부터 10번까지 번호를 매겨 딱 10줄로 깊이 있게 요약해.\n"
+        "2. [가독성] 각 줄(번호)이 끝날 때마다 반드시 '엔터 2번(빈 줄 1개)'을 넣어서 문단 사이를 널찍하게 띄어 써.\n"
+        "3. [강조] 각 줄에서 가장 중요한 핵심 키워드나 수치는 반드시 **볼드체**로 처리해.\n"
+        "4. [시각화] 중요한 포인트 앞에는 🔴, 🔵, 🔥, 💡, 🚀 같은 컬러 이모지를 적극적으로 사용해서 시각적으로 화려하고 눈에 띄게 만들어. \n"
+        "5. [수혜주 추천] 요약이 끝난 후, 원문에 기업이 직접 언급되지 않았더라도 이 리포트의 산업 테마와 가장 연관성이 높은 '실제 시장 핵심 수혜 기업' 5개를 너의 배경지식을 동원해 찾아내어 '🎯 *관련 집중 수혜주*: 기업A, 기업B, 기업C, 기업D, 기업E' 형식으로 적어."
+                "6. 너의 메세지를 보는 사람들은 투자 전문가 수준이야. 간단한 수준의 내용은 아무런 도움이 안된다는 뜻이지. 요약을 잘 해야할 것이야. 그리고 10줄 요약 후 전체적인 결론을 한 줄로 너무 간단하지 않게 요약해서 결론을 내어줘. \n"
     )
 
     try:
@@ -35,7 +38,9 @@ def get_summary(text):
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": f"리포트 원문:\n{text[:8000]}"}
             ],
-            temperature=0.0 # 소설 쓰는 것(환각)을 완벽 차단
+            # 아까는 지어내는 걸 막으려고 0으로 했지만, 
+            # 이제는 AI의 '자체 지식(수혜주 5개)'을 꺼내 써야 하므로 상상력(temperature)을 약간 올립니다.
+            temperature=0.4 
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -61,9 +66,7 @@ def process_pdf(pdf_url):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         r = requests.get(pdf_url, headers=headers, timeout=20)
         
-        # 파일이 정상적인 PDF인지 매직 넘버(%PDF)로 검사
         if not r.content.startswith(b'%PDF'):
-            print("   ❌ 다운받은 파일이 PDF 포맷이 아닙니다.")
             return None
             
         with open("temp.pdf", "wb") as f:
@@ -71,17 +74,14 @@ def process_pdf(pdf_url):
             
         doc = fitz.open("temp.pdf")
         text = ""
-        # 산업 리포트는 깊이가 중요하므로 앞 6페이지까지 넉넉히 정독
         for i in range(min(len(doc), 6)): 
             text += doc[i].get_text()
             
         return text.strip() if len(text.strip()) > 200 else None
-    except Exception as e:
-        print(f"   ❌ PDF 처리 실패: {e}")
-        return None
+    except: return None
 
 def check_industry_reports():
-    print("🔎 산업 리포트 전용 봇 가동 시작...")
+    print("🔎 네이버 산업 리포트 가독성 버전 가동 시작...")
     url = "https://finance.naver.com/research/industry_list.naver"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
@@ -105,37 +105,23 @@ def check_industry_reports():
             if not a_tag: continue
             
             title = a_tag.get_text().strip()
-            
-            # 이미 보낸 리포트 패스
             if title in sent_titles: continue
             
-            print(f"\n👉 타겟 발견: {title}")
             detail_url = "https://finance.naver.com/research/" + a_tag['href']
             brokerage = cols[2].get_text().strip()
             
-            # 1. 가짜 링크 거르고 진짜 PDF 링크 확보
             pdf_url = get_real_pdf_url(detail_url)
-            if not pdf_url:
-                print("   ❌ 상세 페이지에 PDF 파일이 없습니다.")
-                continue
+            if not pdf_url: continue
             
-            # 2. PDF에서 텍스트 뽑기 (텍스트 없으면 요약 취소)
-            print("   - PDF 파일 분석 중...")
             pdf_text = process_pdf(pdf_url)
-            if not pdf_text:
-                print("   ❌ 텍스트를 읽을 수 없는 PDF입니다. 건너뜁니다.")
-                continue
+            if not pdf_text: continue
             
-            # 3. AI 분석 및 텔레그램 전송
-            print("   - AI 요약 진행 중...")
             summary = get_summary(pdf_text)
             
-            msg = f"📢 *[산업 심층 브리핑]*\n📌 {title}\n🏢 {brokerage}\n\n{summary}\n\n🔗 [원문 PDF 보기]({pdf_url})"
+            # PDF 파일 첨부 없이, 깔끔하게 원문 링크만 제공
+            msg = f"📢 *[산업 심층 브리핑]*\n📌 {title}\n🏢 {brokerage}\n\n{summary}\n\n[🔗 원문보기]({pdf_url})"
             send_tg(msg)
             
-            print(f"✅ 텔레그램 전송 완료: {title}")
-            
-            # 성공한 리포트만 수첩에 기록
             with open(sent_file, "a", encoding="utf-8") as f:
                 f.write(title + "\n")
             
@@ -143,6 +129,9 @@ def check_industry_reports():
             
     except Exception as e:
         print(f"🚨 에러 발생: {e}")
+
+if __name__ == "__main__":
+    check_industry_reports()
 
 if __name__ == "__main__":
     check_industry_reports()
